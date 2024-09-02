@@ -14,36 +14,46 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+set -e
+
 if [ -z "$PROJECT" ]; then
-  echo "No PROJECT variable set"
-  exit
+  echo "Error: No PROJECT variable set" >&2
+  exit 1
 fi
 
 if [ -z "$NETWORK" ]; then
-  echo "No NETWORK variable set"
-  exit
+  echo "Error: No NETWORK variable set" >&2
+  exit 1
 fi
 
 if [ -z "$SUBNET" ]; then
-  echo "No SUBNET variable set"
-  exit
+  echo "Error: No SUBNET variable set" >&2
+  exit 1
 fi
 
 if ! [ -x "$(command -v jq)" ]; then
-  echo "jq command is not on your PATH"
-  exit
+  echo "Error: jq command is not on your PATH" >&2
+  exit 1
 fi
 
 function wait_for_operation() {
-  while true; do
-    STATE="$(apigeecli operations get -o "$PROJECT" -n "$1" -t "$TOKEN" | jq --raw-output '.metadata.state')"
+  local op_name="$1"
+  local timeout=600  # 10 minutes
+  local elapsed=0
+
+  while [ "$elapsed" -lt "$timeout" ]; do
+    STATE="$(apigeecli operations get -o "$PROJECT" -n "$op_name" -t "$TOKEN" | jq --raw-output '.metadata.state')"
     if [ "$STATE" = "FINISHED" ]; then
       echo
-      break
+      return
     fi
     echo -n .
     sleep 5
+    elapsed=$((elapsed + 5))
   done
+
+  echo "Error: Operation $op_name did not complete in time" >&2
+  exit 1
 }
 
 echo "Installing apigeecli"
@@ -72,7 +82,7 @@ wait_for_operation "$OPERATION"
 # Enable APIs
 gcloud services enable compute.googleapis.com --project="$PROJECT" --quiet
 
-# Reserve an IP address for the Load Balancer"
+# Reserve an IP address for the Load Balancer
 echo "Reserving load balancer IP address..."
 gcloud compute addresses create sample-apigee-vip --ip-version=IPV4 --global --project "$PROJECT" --quiet
 RUNTIME_IP=$(gcloud compute addresses describe sample-apigee-vip --format="get(address)" --global --project "$PROJECT" --quiet)
@@ -92,7 +102,7 @@ echo "Creating SSL certificate..."
 gcloud compute ssl-certificates create sample-apigee-ssl-cert \
   --domains="$RUNTIME_HOST_ALIAS" --project "$PROJECT" --quiet
 
-## Create a global Load Balancer
+# Create a global Load Balancer
 echo "Creating external load balancer..."
 
 # Create a PSC NEG
@@ -149,5 +159,4 @@ npm install
 npm run test
 
 echo "# To send an EXTERNAL test request, execute the following commands:"
-echo "export RUNTIME_HOST_ALIAS=$RUNTIME_HOST_ALIAS"
-echo "curl -v https://$RUNTIME_HOST_ALIAS/healthz/ingress -H 'User-Agent: GoogleHC'"
+echo "
